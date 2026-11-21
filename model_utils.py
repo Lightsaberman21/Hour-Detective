@@ -16,7 +16,7 @@ def _ratio(X, a, b):
   return top / bottom
 
 def clean_features(df):
-  X = df.drop(columns=[c for c in DROP_COLS if c in df.colums]).copy()
+  X = df.drop(columns=[c for c in DROP_COLS if c in df.columns]).copy()
 
   for c in X.columns:
     if X[c].dtype == bool:
