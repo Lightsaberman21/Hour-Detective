@@ -19,8 +19,8 @@ y_log = np.log1p(y)
 
 cv = KFold(n_splits=5, shuffle=True, random_state=0)
 guess_log = cross_val_predict(build_pipeline(text_cols), X, y_log, cv=cv)
-guess = np.clip(np.exmp1(guess_log), 0, MAX_HOURS)
-baseline = np.full(len(y), np.exmp1(y_log.mean()))
+guess = np.clip(np.expm1(guess_log), 0, MAX_HOURS)
+baseline = np.full(len(y), np.expm1(y_log.mean()))
 print("Baseline (same guess for everyone) RMSLE:", round(root_mean_squared_log_error(y, baseline), 4))
 print("My model RMSLE (lower is better):", round(root_mean_squared_log_error(y, guess), 4))
 
