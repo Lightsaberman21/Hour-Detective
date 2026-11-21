@@ -45,5 +45,36 @@ Page = """
   <form method="post">
   {% for col,label in numbers %}<label>{{label}}<input type="number" step="any" min="0" name="{{col}}" value="{{vals.get(col, '')}}"></label>{% endfor %}
   {% for col,opts in choices.items() %}<label>{{col.replace('_',' ').title()}}<select name="{{col}}"><option value="">(unkown)</option>
-    {% for 
+    {% for o in opts %}<option {{'selected' if vals.get(col)==o}}>{{0}}</option>{% endfor %}</select></label>{% endfor %}
+  {% for col, label in checks %}<label><input type="checkbox" name="{{col}}" {{'checked' if vals.get(col)}}> {{label}}</label{% endfor %}
+  <button>Guess the hours</button>
+  </form>
+  {% if hours is not none %}<div class="result">Estimated time: about <b>{{'%.1f'|format(hours)}} hours</b></div>{% endif %}
 """
+
+
+def to_cell(col, value):
+  if isinstance(value, bool):
+    return str(value) if col in bundle["text_cols"] else int(value)
+  return value
+
+@app.route("/", methods=["GET", "POST"])
+def home():
+  hours, vals = None, {}
+  if request.method == "POST":
+    row = {}
+    for col, _ in NUMBERS:
+      raw = request.form.get(col, "").strip()
+      vals[col] = raw
+      row[col] = float(raw) if raw else np.nan
+    for col in CHOICES:
+      vals[col] = request.form.get(col, "")
+      row[col] = vals[col] or np.nan
+    for col, _ in CHECKS:
+      vals[col] = col in request.form
+      row[col] = to_cell(col, vals[col])
+    hours = float(predict_hours(bundle, pd.DataFrame([row]))[0])
+  return render_template_string(PAGE, numbers=NUMBERS, choices=CHOICES, checks=CHECKS, vals=vals, hours=hours)
+
+if __name__ == "__main__":
+  app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
