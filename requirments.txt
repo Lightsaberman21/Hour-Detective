@@ -4,3 +4,7 @@ joblib
 numpy
 flask
 gunicorn
+lightbgm
+xgboost
+catboost
+scipy
