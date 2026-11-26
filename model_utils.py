@@ -771,4 +771,188 @@ def _fit_one_model(name, X_tr_cb, X_va_cb, X_tr_lgb, X_va_lgb, X_tr_tree, X_va_t
     )
     m.fit(X_tr_cb, y_tr, eval_set=(X_va_cb, y_va), cat_features=cat_indices, early_stopping_rounds=120, verbose=False)
     return m, m.predict(X_va_cb)
-  if name == "lgb_std"
+  if name == "lgb_std":
+    m = LGBMRegressor(
+      n_estimators=2500,
+      learning_rate=0.02,
+      num_leaves=31,
+      min_child_samples=20,
+      subsample=0.8,
+      subsample_freq=1,
+      colsample_bytree=0.7,
+      reg_alpha=0.5,
+      reg_lambda=3.0,
+      random_state=seed,
+      n_jobs=-1,
+      verbose=-1,
+    )
+    m.fit(X_tr_lgb, y_tr, eval_set=[(X_va_lgb, y_va)], eval_metric="rmse", callbacks=[early_stopping(120, verbose=False)])
+    return m, m.predict(X_va_lgb)
+  if name == "lgb_et":
+    m = LGBMRegressor(
+      n_estimators=3000,
+      learning_rate=0.02,
+      num_leaves=47,
+      min_child_samples=15,
+      extra_t,
+      subsample_freq=1,
+      colsample_bytree=0.55,
+      reg_alpha=1.0,
+      reg_lambda=5.0,
+      random_state=seed + 200,
+      n_jobs=-1,
+      verbose=-1,
+    )
+    m.fit(X_tr_lgb, y_tr, eval_set=[(X_va_lgb, y_va)], eval_metric="rmse", callbacks=[early_stopping(120, verbose=False)])
+    return m, m.predict(X_va_lgb)
+  if name == "lgb_huber":
+    m = LGBMRegressor(
+      objective="huber",
+      alpha=0.8,
+      n_estimators=2500,
+      learning_rate=0.02,
+      num_leaves=23,
+      min_child_samples=25,
+      subsample=0.8,
+      subsample_freq=1,
+      colsample_bytree=0.75,
+      reg_alpha=0.5,
+      reg_lambda=4.0,
+      random_state=seed + 300,
+      n_jobs=-1,
+      verbose=-1,
+    )
+    m.fit(X_tr_lgb, y_tr, eval_set=[(X_va_lgb, y_va)], eval_metric="rmse", callbacks=[early_stopping(120, verbose=False)])
+    return m, m.predict(X_va_lgb)
+  if name == "xgb_d5":
+    m = XGBRegressor(
+      n_estimators=2500,
+      learning_rate=0.02,
+      max_depth=5,
+      min_child_weight=10,
+      subsample=0.8,
+      colsample_bytree=0.65,
+      colsample_bylevel=0.8,
+      reg_alpha=0.5,
+      reg_lambda=3.0,
+      tree_method="hist",
+      enable_categorical=True,
+      max_cat_to_onehot=8,
+      early_stopping_rounds=120,
+      eval_metric="rmse",
+      random_state=seed,
+      n_jobs=-1,
+    )
+    m.fit(X_tr_lgb, y_tr, eval_set=[(X_va_lgb, y_va)], verbose=False)
+    return m, m.predict(X_va_lgb)
+  if name == "xgb_d7":
+    m = XGBRegressor(
+      n_estimators=2500,
+      learning_rate=0.015,
+      max_depth=7,
+      min_child_weight=20,
+      subsample=0.75,
+      colsample_bytree=0.5,
+      reg_alpha=1.5,
+      reg_lambda=8.0,
+      tree_method="hist",
+      enable_categorical=True,
+      max_cat_to_onehot=8,
+      early_stopping_rounds=120,
+      eval_metric="rmse",
+      random_state=seed + 400,
+      n_jobs=-1,
+    )
+    m.fit(X_tr_lgb, y_tr, eval_set=[(X_va_lgb, y_va)], verbose=False)
+    return m, m.predict(X_va_lgb)
+  if name == "hgb":
+    m = HistGradientBoostingRegressor(
+      max_iter=1000,
+      learning_rate=0.025,
+      max_leaf_nodes=31,
+      min_samples_leaf=25,
+      l2_regularization=3.0,
+      max_features=0.75,
+      early_stopping=True,
+      validation_fraction=0.1,
+      n_iter_no_change=50,
+      random_state=seed,
+    )
+    m.fit(X_tr_tree, y_tr)
+    return m, m.predict(X_va_tree)
+  if name == "et":
+    m = ExtraTreesRegressor(
+      n_estimators=300,
+      max_depth=18,
+      min_samples_leaf=3,
+      max_features=0.5,
+      random_state=seed,
+      n_jobs=-1,
+    )
+    m.fit(X_tr_tree, y_tr)
+    return m, m.predict(X_va_tree)
+  if name == "ridge":
+    m = RidgeCV(alphas=[10.0, 25.0, 50.0, 100.0, 250.0, 500.0, 1000.0, 2500.0])
+    m.fit(X_tr_lin, y_tr)
+    return m, m.predict(X_va_lin)
+  if name == "svr":
+    m = SVR(kernel="rbf", C=1.5, epsilon=0.05)
+    m.fit(X_tr_lin, y_tr)
+    return m, m.predict(X_va_lin)
+  m1 = MLPRegressor(
+    hidden_layer_sizes=(128, 64),
+    alpha=2.0,
+    learning_rate_init=0.0015,
+    max_iter=250,
+    early_stopping=True,
+    validation_fraction=0.12,
+    n_iter_no_change=15,
+    random_state=seed,
+  )
+  m2 = MLPRegressor(
+    hidden_layer_sizes=(96, 48),
+    alpha=3.0,
+    learning_rate_init=0.0015,
+    max_iter=250,
+    early_stopping=True,
+    validation_fraction=0.12,
+    n_iter_no_change=15,
+    random_state=seed + 500,
+  )
+  m1.fit(X_tr_lin, y_tr)
+  m2.fit(X_tr_lin, y_tr)
+  return (m1, m2), 0.5 * (m1.predict(X_va_lin) + m2.predict(X_va_lin))
+def _predict_one_model(name, model_obj, X_cb, X_lgb, X_tree, X_lin):
+  if name in ("cb_d6", "cb_d5"):
+    return model_obj.predict(X_cb)
+  if name in ("lgb_std", "lgb_et", "lgb_huber", "xgb_d5", "xgb_d7"):
+    return model_obj.predict(X_lgb)
+  if name in ("hgb", "et"):
+    return model_obj.predict(X_tree)
+  if name in ("ridge", "svr"):
+    return model_obj.predict(X_lin)
+  m1, m2 = model_obj
+  return 0.5 * (m1.predict(X_lin) + m2.predict(X_lin))
+def _build_meta_matrix(P, oof_bucket, bucket_means, X_base, has_bucket_clf):
+  parts = [P]
+  if has_bucket_clf:
+    exp_bucket = (oof_bucket @ bucket_means).reshape(-1, 1)
+    parts.extend([oof_bucket, exp_bucket])
+  for col in ("has_no_git", "has_no_live_metrics", "has_no_readme_metrics"):
+    if col in X_base.columns:
+      parts.append(pd.to_numeric(X_base[col], errors="coerce").fillna(0.0).to_numpy(dtype=float).reshape(-1, 1))
+      return np.hstack(parts)
+def fit_bundle(train_df):
+  t0 = time.monotonic()
+  with warnings.catch_warnings():
+    warnings.simplefilter("ignore")
+    y_series = pd.to_numeric(train_df["hours_spent"], errors="coerce")
+    valid_mask = y_series.notna()
+    df_clean = train_df.loc[valid_mask].reset_index(drop=True)
+    y_raw = y_series.loc[valid_mask].reset_index(drop=True).clip(lower=0.0, upper=MAX_HOURS)
+    y_log = np.log1p(y_raw.to_numpy(dtype=float))
+    bucket_y = _extract_buckets(df_clean, y_raw)
+    X_base = clean_features(df_clean)
+    cat_cols = find_text_columns(X_base)
+    X_base = text_to_str(ase, cat_cols)
+    feature_stats = _fit_feature_s
