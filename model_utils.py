@@ -49,8 +49,6 @@ BOOL_COLS = [
   "url_is_live",
   "is_mobile_responsive",
   "has_custom_domain",
-  "is_mobile_responsive",
-  "has_custom_domain",
   "is_multiplayer",
   "mentions_ai_api",
   "is_clone_or_tutorial",
@@ -62,7 +60,7 @@ PAIR_COLS = [
   ("framework", "project_category"),
   ("project_category", "commit_cadence"),
   ("author_prior_projects", "author_account_age_years"),
-  ("use_game_engine", "project_category"),
+  ("uses_game_engine", "project_category"),
   ("is_clone_or_tutorial", "is_forked_from_template"),
 ]
 
@@ -235,11 +233,11 @@ def clean_features(df):
   max_commit =_num(X, "max_lines_in_one_commit")
   pct_first =_num(X, "pct_code_in_first_commit")
   num_authors =_num(X, "num_commit_authors")
-  avg_msg_len =_num(X, "avg_commit_msg_len")
+  avg_msg_len =_num(X, "avg_commit_msg_length")
   pct_generic =_num(X, "pct_generic_commit_msgs")
   num_branches =_num(X, "num_branches")
   num_merges =_num(X, "num_merge_commits")
-  pct_weeked =_num(X, "pct_commits_weekend")
+  pct_weekend =_num(X, "pct_commits_weekend")
   pct_late =_num(X, "pct_commits_late_night")
   loc =_num(X, "lines_of_code")
   num_files =_num(X, "num_source_files")
@@ -251,11 +249,11 @@ def clean_features(df):
   num_tests =_num(X, "num_test_files")
   avg_file_len =_num(X, "avg_file_length")
   comment_ratio =_num(X, "comment_line_ratio")
-  num_imgs =_num(X, "num_images_files")
+  num_imgs =_num(X, "num_image_files")
   num_audio =_num(X, "num_audio_files")
   num_3d =_num(X, "num_3d_model_files")
   num_fonts =_num(X, "num_font_files")
-  asset_mb =_num(X, "assest_size_mb")
+  asset_mb =_num(X, "asset_size_mb")
   readme_words =_num(X, "readme_word_count")
   readme_heads =_num(X, "readme_num_headings")
   readme_imgs =_num(X, "readme_num_images")
@@ -274,9 +272,9 @@ def clean_features(df):
   is_fork_tpl =_num(X, "is_forked_from_template")
   cadence_str = _str_col(X, "commit_cadence")
   prior_str = _str_col(X, "author_prior_projects")
-  age_str = _str_col(X, "age_account_age_years")
+  age_str = _str_col(X, "author_account_age_years")
   fw_str = _str_col(X, "framework")
-  cadence_ord = cadence_str.map({"spordic": 0.0, "daily": 1.0, "frequent": 2.0})
+  cadence_ord = cadence_str.map({"sporadic": 0.0, "daily": 1.0, "frequent": 2.0})
   prior_ord = prior_str.map({"0": 0.0, "1-2": 1.0, "3-5": 2.0, "6+": 3.0})
   age_ord = age_str.map({"<1": 0.0, "1-2": 1.0, "3-5": 2.0, "6+": 3.0})
   prior_mid = prior_str.map({"0": 0.0, "1-2": 1.5, "3-5": 4.0, "6+": 8.0})
@@ -292,6 +290,7 @@ def clean_features(df):
   weighted_assets = (
     num_imgs.fillna(0.0)
     + 2.0 * num_audio.fillna(0.0)
+    + 4.0 * num_3d.fillna(0.0)
     +0.5 * num_fonts.fillna(0.0)
   ).where(total_assets.notna(), np.nan)
   non_first_added = lines_added * non_first_share
@@ -477,27 +476,27 @@ def clean_features(df):
   }
   for col_name in LOG1P_COLS:
     new_cols["log1p_" + col_name] = _safe_log1p(log_sources[col_name])
-    new_cols["log_diff_commits_active"] = new_cols["log1p_num_commits"] - new_cols["log1p_active_commit_days"]
-    new_cols["log_diff_active_span"] = new_cols["log1p_active_commit_days"] - new_cols["log1p_project_span_days"]
-    new_cols["log_diff_loc_commits"] = new_cols["log1p_lines_of_code"] - new_cols["log1p_num_commits"]
-    new_cols["log_diff_loc_added"] = new_cols["log1p_lines_of_code"] - new_cols["log1p_lines_added_total"]
-    new_cols["log_diff_added_deleted"] = new_cols["log1p_lines_added_total"] - new_cols["log1p_lines_deleted_total"]
-    new_cols["log_diff_max_median_commit"] = new_cols["log1p_max_lines_in_one_commit"] - new_cols["log1p_median_lines_per_commit"]
-    new_cols["log_commits_x_log_active"] = new_cols["log1p_num_commits"] * new_cols["log1p_active_commit_days"]
-    new_cols["log_commits_x_log_loc"] = new_cols["log1p_num_commits"] * new_cols["log1p_lines_of_code"]
-    new_cols["effective_work_score"] = (
-      new_cols["log1p_effective_commits"].fillna(0.0)
-      + new_cols["log1p_active_commit_days"].fillna(0.0)
-      + 0.5 * new_cols["log1p_non_first_loc"].fillna(0.0)
-      + 0.5 * new_cols["log1p_total_assets"].fillna(0.0)
-    )
-    pair_df_cols = {}
+  new_cols["log_diff_commits_active"] = new_cols["log1p_num_commits"] - new_cols["log1p_active_commit_days"]
+  new_cols["log_diff_active_span"] = new_cols["log1p_active_commit_days"] - new_cols["log1p_project_span_days"]
+  new_cols["log_diff_loc_commits"] = new_cols["log1p_lines_of_code"] - new_cols["log1p_num_commits"]
+  new_cols["log_diff_loc_added"] = new_cols["log1p_lines_of_code"] - new_cols["log1p_lines_added_total"]
+  new_cols["log_diff_added_deleted"] = new_cols["log1p_lines_added_total"] - new_cols["log1p_lines_deleted_total"]
+  new_cols["log_diff_max_median_commit"] = new_cols["log1p_max_lines_in_one_commit"] - new_cols["log1p_median_lines_per_commit"]
+  new_cols["log_commits_x_log_active"] = new_cols["log1p_num_commits"] * new_cols["log1p_active_commit_days"]
+  new_cols["log_commits_x_log_loc"] = new_cols["log1p_num_commits"] * new_cols["log1p_lines_of_code"]
+  new_cols["effective_work_score"] = (
+    new_cols["log1p_effective_commits"].fillna(0.0)
+    + new_cols["log1p_active_commit_days"].fillna(0.0)
+    + 0.5 * new_cols["log1p_non_first_loc"].fillna(0.0)
+    + 0.5 * new_cols["log1p_total_assets"].fillna(0.0)
+  )
+  pair_df_cols = {}
   for a, b in PAIR_COLS:
     sa = _str_col(X, a).fillna("_NA_")
     sb = _str_col(X, b).fillna("_NA_")
     pair_df_cols[a + "__" + b] = sa + "__" + sb
-    out = pd.concat([X, pd.DataFrame(new_cols, index=X.index), pd.DataFrame(pair_df_cols, index=X.index)], axis=1)
-    return out.replace([np.inf, -np.inf], np.nan)
+  out = pd.concat([X, pd.DataFrame(new_cols, index=X.index), pd.DataFrame(pair_df_cols, index=X.index)], axis=1)
+  return out.replace([np.inf, -np.inf], np.nan)
   
 def find_text_columns(X):
   return [c for c in X.columns if not pd.api.types.is_numeric_dtype(X[c])]
@@ -541,28 +540,28 @@ def _fit_feature_stats(X, cat_cols):
     if c in X.columns:
       key = X[c].fillna("__MISSING__").astype(str)
       freq_maps[c] = (key.value_counts() / float(n)).to_dict()
-      group_stats = {}
-      for gcol in GROUP_COLS:
-        if gcol not in X.columns:
-          continue
-        key = X[gcol].fillna("__MISSING__").astype(str)
-        group_stats[gcol] = {}
-        for vcol in GROUP_VAL_COLS:
-          if vcol not in X.columns:
-            continue
-          vals = pd.to_numeric(X[vcol], errors="coerce")
-          gmean_all = float(vals.mean()) if vals.notna().any() else 0.0
-          gstd_all = float(vals.std()) if vals.notna().sum() > 1 else 1.0
-          if not np.isfinite(gstd_all) or gstd_all < 0.1:
-            gstd_all = 1.0
-          tmp = pd.DataFrame({"k": key, "v": vals}).dropna(subset=["v"])
-          if len(tmp) == 0:
-            group_stats[gcol][vcol] = ({}, {}, gmean_all, gstd_all)
-            continue
-          agg = tmp.groupby("k")["v"].agg(["count", "mean", "std"])
-          smoothed_mean = (agg["count"] * agg["mean"] + 5.0 * gmean_all) / (agg["count"] + 5.0)
-          std_map = agg["std"].fillna(gstd_all).clip(lower=0.1).to_dict()
-          group_stats[gcol][vcol] = (smoothed_mean.to_dict(), std_map, gmean_all, gstd_all)
+  group_stats = {}
+  for gcol in GROUP_COLS:
+    if gcol not in X.columns:
+      continue
+    key = X[gcol].fillna("__MISSING__").astype(str)
+    group_stats[gcol] = {}
+    for vcol in GROUP_VAL_COLS:
+      if vcol not in X.columns:
+        continue
+      vals = pd.to_numeric(X[vcol], errors="coerce")
+      gmean_all = float(vals.mean()) if vals.notna().any() else 0.0
+      gstd_all = float(vals.std()) if vals.notna().sum() > 1 else 1.0
+      if not np.isfinite(gstd_all) or gstd_all < 0.1:
+        gstd_all = 1.0
+      tmp = pd.DataFrame({"k": key, "v": vals}).dropna(subset=["v"])
+      if len(tmp) == 0:
+        group_stats[gcol][vcol] = ({}, {}, gmean_all, gstd_all)
+        continue
+      agg = tmp.groupby("k")["v"].agg(["count", "mean", "std"])
+      smoothed_mean = (agg["count"] * agg["mean"] + 5.0 * gmean_all) / (agg["count"] + 5.0)
+      std_map = agg["std"].fillna(gstd_all).clip(lower=0.1).to_dict()
+      group_stats[gcol][vcol] = (smoothed_mean.to_dict(), std_map, gmean_all, gstd_all)
   return {"freq_maps": freq_maps, "group_stats": group_stats}
 def _apply_feature_stats(X, stats):
   extra = {}
@@ -794,7 +793,8 @@ def _fit_one_model(name, X_tr_cb, X_va_cb, X_tr_lgb, X_va_lgb, X_tr_tree, X_va_t
       learning_rate=0.02,
       num_leaves=47,
       min_child_samples=15,
-      extra_t,
+      extra_trees=True,
+      subsample=0.85,
       subsample_freq=1,
       colsample_bytree=0.55,
       reg_alpha=1.0,
@@ -880,32 +880,32 @@ def _fit_one_model(name, X_tr_cb, X_va_cb, X_tr_lgb, X_va_lgb, X_tr_tree, X_va_t
     )
     m.fit(X_tr_tree, y_tr)
     return m, m.predict(X_va_tree)
-    if name == "et":
-        m = ExtraTreesRegressor(
-            n_estimators=150,
-            max_depth=13,
-            min_samples_leaf=5,
-            max_features=0.5,
-            random_state=seed,
-            n_jobs=-1,
-        )
-        m.fit(X_tr_tree, y_tr)
-        return m, m.predict(X_va_tree)
+  if name == "et":
+    m = ExtraTreesRegressor(
+      n_estimators=150,
+      max_depth=13,
+      min_samples_leaf=5,
+      max_features=0.5,
+      random_state=seed,
+      n_jobs=-1,
+    )
+    m.fit(X_tr_tree, y_tr)
+    return m, m.predict(X_va_tree)
 
-    if name == "ridge":
-        m = RidgeCV(alphas=[10.0, 25.0, 50.0, 100.0, 250.0, 500.0, 1000.0, 2500.0])
-        m.fit(X_tr_lin, y_tr)
-        return m, m.predict(X_va_lin)
+  if name == "ridge":
+    m = RidgeCV(alphas=[10.0, 25.0, 50.0, 100.0, 250.0, 500.0, 1000.0, 2500.0])
+    m.fit(X_tr_lin, y_tr)
+    return m, m.predict(X_va_lin)
 
-    if name == "svr":
-        m = Pipeline(
-            [
-                ("rbf", Nystroem(n_components=min(400, max(2, len(X_tr_lin) // 2)), random_state=seed)),
-                ("ridge", RidgeCV(alphas=[1.0, 3.0, 10.0, 30.0, 100.0, 300.0])),
-            ]
-        )
-        m.fit(X_tr_lin, y_tr)
-        return m, m.predict(X_va_lin)
+  if name == "svr":
+    m = Pipeline(
+      [
+        ("rbf", Nystroem(n_components=min(400, max(2, len(X_tr_lin) // 2)), random_state=seed)),
+        ("ridge", RidgeCV(alphas=[1.0, 3.0, 10.0, 30.0, 100.0, 300.0])),
+      ]
+    )
+    m.fit(X_tr_lin, y_tr)
+    return m, m.predict(X_va_lin)
   m1 = MLPRegressor(
     hidden_layer_sizes=(128, 64),
     alpha=2.0,
@@ -961,7 +961,7 @@ def fit_bundle(train_df):
     bucket_y = _extract_buckets(df_clean, y_raw)
     X_base = clean_features(df_clean)
     cat_cols = find_text_columns(X_base)
-    X_base = text_to_str(ase, cat_cols)
+    X_base = text_to_str(X_base, cat_cols)
     feature_stats = _fit_feature_stats(X_base, cat_cols)
     X_base = _apply_feature_stats(X_base, feature_stats)
     all_drop = [c for c in X_base.columns if c not in cat_cols and X_base[c].isna().all()]
@@ -1146,8 +1146,6 @@ def fit_bundle(train_df):
       "bucket_means": bucket_means,
       "w_simplex": w_simplex,
       "ridge_meta": ridge_meta,
-      "alpha_blend": alpha_blend,
-      "text_cols": cat_cols,
       "model": fold_models[trained_names[0]][0],
     }
 def predict_hours(bundle, df):
@@ -1198,4 +1196,4 @@ def predict_hours(bundle, df):
     pred_ridge = np.clip(bundle["ridge_meta"].predict(M_test), 0.0, MAX_LOG)
     alpha = bundle["alpha_blend"]
     pred_log = np.clip(alpha * pred_simplex + (1.0 - alpha) * pred_ridge, 0.0, MAX_LOG)
-    return np.clip(np.expm1(pred_log), 0.0, MAX_HOURS):
+    return np.clip(np.expm1(pred_log), 0.0, MAX_HOURS)

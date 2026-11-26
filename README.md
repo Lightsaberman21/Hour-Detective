@@ -1,18 +1,44 @@
 # Hour Detective
 
-Predicts how many hours a Hack Club project really took, using only its git history, code, README and live-site stats.
+Hour Detective estimates how many hours a Hack Club project took from its Git history, code, README, and live-site stats.
 
-## How it works
-- The model is gradient boosting (`HistGradientBoostingRegressor`), which handles empty cells natively.
-- It predicts `log(1 + hours)`, because the contest scores with RMSLE.
-- `predict.py` trains on `train.csv`, predicts `test.csv`, and writes `predictions.csv`.
-- `train.py` reports a cross-validated score and saves `model.joblib` for the web demo.
-- `app.py` is a small Flask web demo.
+## Model
 
-## Run it
+The model uses an ensemble of regressors trained on `log(1 + hours_spent)`. `train.py` reports the ensemble's out-of-fold (OOF) RMSLE, a cross-validated estimate where lower is better. The latest run reported **0.6543**; scores can vary when the data or model changes.
+
+## Files
+
+- `train.csv` contains the labeled training data.
+- `test.csv` contains projects to predict.
+- `model_utils.py` contains feature preparation, training, and prediction code.
+- `train.py` trains the model, prints its OOF RMSLE, and saves a compressed `model.joblib`.
+- `predict.py` predicts hours for `test.csv` and writes `predictions.csv`. If `train.csv` is present, it trains a fresh model before predicting.
+- `app.py` runs the Flask web demo using the saved `model.joblib`.
+
+## Setup and usage
+
+Install the dependencies:
+
+```bash
+pip install -r requirments.txt
 ```
-pip install -r requirements.txt
-python train.py      # score + saves model.joblib
-python predict.py    # writes predictions.csv
-python app.py        # web demo at http://localhost:5000
+
+Train and save the model:
+
+```bash
+python train.py
 ```
+
+Generate predictions for `test.csv`:
+
+```bash
+python predict.py
+```
+
+Run the web demo after training:
+
+```bash
+python app.py
+```
+
+Then open <http://localhost:5000>.
