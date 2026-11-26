@@ -499,3 +499,276 @@ def clean_features(df):
     out = pd.concat([X, pd.DataFrame(new_cols, index=X.index), pd.DataFrame(pair_df_cols, index=X.index)], axis=1)
     return out.replace([np.inf, -np.inf], np.nan)
   
+def find_text_columns(X):
+  return [c for c in X.columns if not pd.api.types.is_numeric_dtype(X[c])]
+def text_to_str(X, text_cols):
+  X = X.copy()
+  for c in text_cols:
+    X[c] = _str_col(X, c)
+  return X
+def build_pipeline(text_cols):
+  encode_text = ColumnTransformer(
+    [
+      (
+        "text",
+        OrdinalEncoder(
+          handle_unknown="use_encoded_value",
+          unknown_value=np.nan,
+          encoded_missing_value=np.nan,
+        ),
+        text_cols,
+      )
+    ],
+    remainder="passthrough",
+  )
+  brain = LGBMRegressor(
+    n_estimators=1000,
+    learning_rate=0.025,
+    num_leaves=31,
+    min_child_samples=20,
+    subsample=0.8,
+    subsample_freq=1,
+    colsample_bytree=0.7,
+    reg_lambda=3.0,
+    random_state=0,
+    verbose=-1,
+  )
+  return Pipeline([("encode", encode_text), ("model", brain)])
+def _fit_feature_stats(X, cat_cols):
+  n = max(len(X), 1)
+  freq_maps = {}
+  for c in cat_cols:
+    if c in X.columns:
+      key = X[c].fillna("__MISSING__").astype(str)
+      freq_maps[c] = (key.value_counts() / float(n)).to_dict()
+      group_stats = {}
+      for gcol in GROUP_COLS:
+        if gcol not in X.columns:
+          continue
+        key = X[gcol].fillna("__MISSING__").astype(str)
+        group_stats[gcol] = {}
+        for vcol in GROUP_VAL_COLS:
+          if vcol not in X.columns:
+            continue
+          vals = pd.to_numeric(X[vcol], errors="coerce")
+          gmean_all = float(vals.mean()) if vals.notna().any() else 0.0
+          gstd_all = float(vals.std()) if vals.notna().sum() > 1 else 1.0
+          if not np.isfinite(gstd_all) or gstd_all < 0.1:
+            gstd_all = 1.0
+          tmp = pd.DataFrame({"k": key, "v": vals}).dropna(subset=["v"])
+          if len(tmp) == 0:
+            group_stats[gcol][vcol] = ({}, {}, gmean_all, gstd_all)
+            continue
+          agg = tmp.groupby("k")["v"].agg(["count", "mean", "std"])
+          smoothed_mean = (agg["count"] * agg["mean"] + 5.0 * gmean_all) / (agg["count"] + 5.0)
+          std_map = agg["std"].fillna(gstd_all).clip(lower=0.1).to_dict()
+          group_stats[gcol][vcol] = (smoothed_mean.to_dict(), std_map, gmean_all, gstd_all)
+  return {"freq_maps": freq_maps, "group_stats": group_stats}
+def _apply_feature_stats(X, stats):
+  extra = {}
+  for c, fmap in stats["freq_maps"].items():
+    if c in X.columns:
+      key = X[c].fillna("__MISSING__").astype(str)
+      extra["freq_" + c] = key.map(fmap).fillna(0.0).astype(float)
+  for gcol, vdict in stats["group_stats"].items():
+    if gcol not in X.columns:
+      continue
+    key = X[gcol].fillna("__MISSING__").astype(str)
+    for vcol, (mean_map, std_map, gmean_all, gstd_all) in vdict.items():
+      if vcol not in X.columns:
+        continue
+      vals = pd.to_numeric(X[vcol], errors="coerce")
+      gm = key.map(mean_map).fillna(gmean_all).astype(float)
+      gs = key.map(std_map).fillna(gstd_all).astype(float)
+      diff = vals - gm
+      extra[vcol + "_rel_" + gcol] = diff
+      extra[vcol + "_z_" + gcol] = diff / gs.clip(lower=0.1)
+  if not extra:
+    return X
+  return pd.concat([X, pd.DataFrame(extra, index=X.index)], axis=1)
+
+def _fit_te_map(series, y, smooth=15.0):
+  gmean = float(np.mean(y))
+  key = series.fillna("__MISSING__").astype(str)
+  agg = pd.DataFrame({"k": key.to_numpy(), "y": y}).groupby("k")["y"].agg(["count", "mean"])
+  smoothed = (agg["count"] * agg["mean"] + smooth * gmean) / (agg["count"] + smooth)
+  return smoothed.to_dict(), gmean
+
+def _apply_te_map(series, mapping, gmean):
+  key = series.fillna("__MISSING__").astype(str)
+  return key.map(mapping).fillna(gmean).astype(float)
+
+def _add_fold_te(X_tr, y_tr, X_va, cat_cols, seed):
+  tr_te = {}
+  va_te = {}
+  n_inner = min(5, max(2, len(X_tr) // 10))
+  inner_splits = list(KFold(n_splits=n_inner, shuffle=True, random_state=seed).split(X_tr))
+  for c in cat_cols:
+    oof_col = np.zeros(len(X_tr), dtype=float)
+    ser_tr = X_tr[c]
+    for itr, iva in inner_splits:
+      m, gm = _fit_te_map(ser_tr.iloc[itr], y_tr[itr])
+      oof_col[iva] = _apply_te_map(ser_tr.iloc[iva], m, gm).to_numpy()
+    tr_te["te_" + c] = pd.Series(oof_col, index=X_tr.index, dtype=float)
+    m_full, gm_full = _fit_te_map(ser_tr, y_tr)
+    va_te["te_" + c] = _apply_te_map(X_va[c], m_full, gm_full)
+  return (
+    pd.concat([X_tr, pd.DataFrame(tr_te, index=X_tr.index)], axis=1),
+    pd.concat([X_va, pd.DataFrame(va_te, index=X_va.index)], axis=1),
+  )
+
+def _prep_cb(X, cat_cols):
+  out = X.copy()
+  cat_set = set(cat_cols)
+  for c in out.columns:
+    if c in cat_set:
+      out[c] = out[c].fillna("__MISSING__").astype(str)
+    elif not pd.api.types.is_numeric_dtype(out[c]):
+      out[c] = pd.to_numeric(out[c], errors="coerce").astype(float)
+  return out
+
+def _prep_lgb(X, cat_cols, cat_categories):
+  out = X.copy()
+  cat_set = set(cat_cols)
+  for c in out.columns:
+    if c in cat_set:
+      s = out[c]
+      s = s.where(s.isna(), s.astype(str))
+      out[c] = pd.Categorical(s, categories=cat_categories[c])
+    elif not pd.api.types.is_numeric_dtype(out[c]):
+      out[c] = pd.to_numeric(out[c], errors="coerce").astype(float)
+  return out
+
+def _build_sk_preps(num_cols, ohe_cols, n_rows):
+  n_q = min(500, max(2, n_rows // 2))
+  min_freq = 5 if n_rows >= 200 else 1
+  tree_steps = [("num", SimpleImputer(strategy="median", keep_empty_features=True), num_cols)]
+  lin_steps = [
+    (
+      "num",
+      Pipeline(
+        [
+          ("imp", SimpleImputer(strategy="median", keep_empty_features=True)),
+          ("qt", QuantileTransformer(n_quantiles=n_q, output_distribution="normal", random_state=42)),
+          ("sc", StandardScaler()),
+        ]
+      ),
+      num_cols,
+    )
+  ]
+  if ohe_cols:
+    ohe_tree = OneHotEncoder(handle_unknown="ignore", sparse_output=False, min_frequency=min_freq)
+    ohe_lin = OneHotEncoder(handle_unknown="ignore", sparse_output=False, min_frequency=min_freq)
+    tree_steps.append(
+      (
+        "cat",
+        Pipeline(
+          [
+            ("imp", SimpleImputer(strategy="constant", fill_value="__MISSING__")),
+            ("ohe", ohe_tree),
+          ]
+        ),
+        ohe_cols,
+      )
+    )
+    lin_steps.append(
+      (
+        "cat",
+        Pipeline(
+          [
+            ("imp", SimpleImputer(strategy="constant", fill_value="__MISSING__")),
+            ("ohe", ohe_lin),
+          ]
+        ),
+        ohe_cols,
+      )
+    )
+  return ColumnTransformer(tree_steps, remainder="drop"), ColumnTransformer(lin_steps, remainder="drop")
+
+def _simplex_loss(w, P, y):
+  diff = P @ w - y
+  return float(np.mean(diff * diff))
+
+def _simplex_eq(w):
+  return float(np.sum(w) - 1.0)
+
+def _fit_simplex(P, y):
+  m = P.shape[1]
+  if m == 1:
+    return np.array([1.0], dtype=float)
+  init_w = np.full(m, 1.0 / m, dtype=float)
+  bounds = [(0.0, 1.0)] * m
+  cons = {"type": "eq", "fun": _simplex_eq}
+  res = minimize(
+    _simplex_loss,
+    init_w,
+    args=(P, y),
+    method="SLSQP",
+    bounds=bounds,
+    constraints=cons,
+  )
+  w = np.clip(res.x, 0.0, 1.0) if res.success else init_w
+  s = float(np.sum(w))
+  return w / s if s > 0.0 else init_w
+
+def _extract_buckets(df, y_raw):
+  y_arr = y_raw.to_numpy(dtype=float)
+  fallback = np.searchsorted([10.0, 30.0, 100.0], y_arr, side="right").astype(int)
+  if "hours_bucket" not in df.columns:
+    return fallback
+  bmap = {"<10": 0, "10-30": 1, "30-100": 2, "100+": 3}
+  mapped = df["hours_bucket"].astype(object).map(bmap)
+  out = mapped.to_numpy(dtype=float)
+  mask = np.isnan(out)
+  out[mask] = fallback[mask]
+  return out.astype(int)
+
+def _make_splits(y_log, bucket_y, n_splits):
+  counts = np.bincount(bucket_y, minlength=4)
+  if np.all(counts >= n_splits):
+    return list(StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=42).split(y_log, bucket_y))
+  n_bins = min(n_splits, max(2, len(y_log) // 10))
+  qbins = pd.qcut(y_log, q=n_bins, labels=False, duplicates="drop")
+  qcounts = np.bincount(qbins)
+  if np.all(qcounts >= n_splits):
+    return list(StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=42).split(y_log, qbins))
+  return list(KFold(n_splits=n_splits, shuffle=True, random_state=42).split(y_log))
+
+def _fit_one_model(name, X_tr_cb, X_va_cb, X_tr_lgb, X_va_lgb, X_tr_tree, X_va_tree, X_tr_lin, X_va_lin, y_tr, y_va, cat_indices, seed):
+  if name == "cb_d6":
+    m = CatBoostRegressor(
+      iterations=2500,
+      learning_rate=0.025,
+      depth=6,
+      l2_leaf_reg=5.0,
+      rsm=0.8,
+      random_strength=1.0,
+      loss_function="RMSE",
+      eval_metric="RMSE",
+      random_seed=seed,
+      thread_count=-1,
+      allow_writing_files=False,
+      verbose=0,
+    )
+    m.fit(X_tr_cb, y_tr, eval_set=(X_va_cb, y_va), cat_features=cat_indices, early_stopping_rounds=120, verbose=False)
+    return m, m.predict(X_va_cb)
+  if name == "cb_d5":
+    m = CatBoostRegressor(
+      iterations=2500,
+      learning_rate=0.03,
+      depth=5,
+      l2_leaf_reg=10.0,
+      rsm=0.75,
+      bootstrap_type="Bernoulli",
+      subsample=0.8,
+      random_strength=1.5,
+      loss_function="RMSE",
+      eval_metric="RMSE",
+      random_seed=seed + 100,
+      thread_count=-1,
+      allow_writing_files=False,
+      verbose=0,
+    )
+    m.fit(X_tr_cb, y_tr, eval_set=(X_va_cb, y_va), cat_features=cat_indices, early_stopping_rounds=120, verbose=False)
+    return m, m.predict(X_va_cb)
+  if name == "lgb_std"
