@@ -369,4 +369,133 @@ def clean_features(df):
     "commits_per_author": _div(num_commits, num_authors),
     "active_days_per_author": _div(active_days, num_authors),
     "loc_per_author": _div(loc, num_authors),
-    "adde"
+    "added_per_author": _div(lines_added, num_authors),
+    "commits_per_branch": _div(num_commits, num_branches + 1.0),
+    "branches_per_author": _div(num_branches, num_authors),
+    "non_comment_loc": loc * (1.0 - comment_ratio).clip(lower=0.0),
+    "comment_loc_est": loc * comment_ratio,
+    "primary_lang_loc": loc * pct_prim_lang,
+    "secondary_lang_loc": loc * (1.0 - pct_prim_lang).clip(lower=0.0),
+    "code_per_directory": _div(loc, num_dirs),
+    "files_per_directory": _div(num_files, num_dirs),
+    "loc_per_source_file": _div(loc, num_files),
+    "loc_per_language": _div(loc, num_langs),
+    "prod_source_files": (num_files - num_tests.fillna(0.0)).clip(lower=0.0),
+    "test_file_share": _div(num_tests, num_files + 1.0),
+    "loc_per_dependency": _div(loc, num_deps + 1.0),
+    "deps_per_source_file": _div(num_deps, num_files + 1.0),
+    "commits_per_source_file": _div(num_commits, num_files + 1.0),
+    "loc_per_active_day": _div(loc, active_days),
+    "loc_per_commit": _div(loc, num_commits),
+    "loc_per_span_day": _div(loc, span_days + 1.0),
+    "dir_complexity": _safe_log1p(num_dirs) * max_depth,
+    "total_assets": total_assets,
+    "weighted_assets": weighted_assets,
+    "asset_mb_per_image": _div(asset_mb, num_imgs),
+    "asset_mb_per_total": _div(asset_mb, total_assets + 1.0),
+    "assets_per_active_day": _div(total_assets, active_days),
+    "readme_words_per_heading": _div(readme_words, readme_heads),
+    "readme_richness": readme_richness,
+    "readme_words_per_loc": _div(readme_words, loc + 1.0),
+    "total_written_words": total_written_words,
+    "kb_per_internal_page": _div(page_kb, num_pages + 1.0),
+    "kb_per_js_file": _div(page_kb, num_js + 1.0),
+    "js_per_internal_page": _div(num_js, num_pages + 1.0),
+    "popularity": pd.concat([stars, forks], axis=1).sum(axis=1, min_count=1),
+    "repo_activity": pd.concat([stars, forks, num_issues, 2.0 * num_prs, 2.0 * num_rels], axis=1).sum(axis=1, min_count=1),
+    "pr_per_commit": _div(num_prs, num_commits + 1.0),
+    "release_per_commit": _div(num_rels, num_commits + 1.0),
+    "capped_stars": (stars >= 50.0).astype(float).where(stars.notna(), np.nan),
+    "capped_forks": (forks >= 50.0).astype(float).where(forks.notna(), np.nan),
+    "capped_pages": (num_pages >= 21.0).astype(float).where(num_pages.notna(), np.nan),
+    "good_practice_count": good_practice_count,
+    "all_quality_count": all_quality_count,
+    "clone_or_template_sum": clone_sum,
+    "net_quality_minus_clone": all_quality_count - 2.0 * clone_sum,
+    "non_clone_loc": loc * (1.0 - is_clone.fillna(0.0)).clip(lower=0.0),
+    "non_clone_commits": num_commits * (1.0 - is_clone.fillna(0.0)).clip(lower=0.0),
+    "non_template_loc": loc * (1.0 - is_fork_tpl.fillna(0.0)).clip(lower=0.0),
+    "commit_cadence_ord": cadence_ord,
+    "author_prior_ord": prior_ord,
+    "author_age_ord": age_ord,
+    "author_prior_mid": prior_mid,
+    "author_age_mid": age_mid,
+    "author_projects_per_year": _div(prior_mid, age_mid + 0.5),
+    "author_exp_sum": prior_ord + age_ord,
+    "git_missing_cnt": _missing_count(X, GIT_CHECK_COLS),
+    "code_missing_cnt": _missing_count(X, CODE_CHECK_COLS),
+    "art_missing_cnt": _missing_count(X, ART_CHECK_COLS),
+    "readme_missing_cnt": _missing_count(X, README_CHECK_COLS),
+    "live_missing_cnt": _missing_count(X, LIVE_CHECK_COLS),
+    "project_missing_cnt": _missing_count(X, PROJECT_CHECK_COLS),
+    "total_missing_cnt": X.isna().sum(axis=1).astype(float),
+    "has_no_git": num_commits.isna().astype(float),
+    "has_no_code": loc.isna().astype(float),
+    "has_no_live_metrics": page_kb.isna().astype(float),
+    "has_no_readme_metrics": (readme_words.isna() | (readme_words == 0.0)).astype(float),
+    "has_no_load_time": load_ms.isna().astype(float),
+    "has_no_framework": (fw_str.isna() | (fw_str == "none")).astype(float),
+    "is_single_commit": (num_commits == 1.0).astype(float).where(num_commits.notna(), np.nan),
+    "is_single_day": (active_days == 1.0).astype(float).where(active_days.notna(), np.nan),
+    "is_single_upload": (pct_first >= 0.95).astype(float).where(pct_first.notna(), np.nan),
+    "is_multi_author": (num_authors > 1.0).astype(float).where(num_authors.notna(), np.nan),
+    "signed_log_net_lines": _signed_log1p(net_lines_git),
+    "signed_log_idle_days": _signed_log1p(span_days - active_days),
+  }
+  log_sources = {
+    "num_commits": num_commits,
+    "active_commit_days": active_days,
+    "project_span_days": span_days,
+    "lines_added_total": lines_added,
+    "lines_deleted_total": lines_deleted,
+    "median_lines_per_commit": median_commit,
+    "max_lines_in_one_commit": max_commit,
+    "lines_of_code": loc,
+    "num_source_files": num_files,
+    "num_directories": num_dirs,
+    "num_dependencies": num_deps,
+    "avg_file_length": avg_file_len,
+    "asset_size_mb": asset_mb,
+    "total_assets": total_assets,
+    "readme_word_count": readme_words,
+    "description_word_count": desc_words,
+    "page_weight_kb": page_kb,
+    "load_time_ms": load_ms,
+    "num_internal_pages": num_pages,
+    "stars": stars,
+    "forks": forks,
+    "num_issues": num_issues,
+    "num_pull_requests": num_prs,
+    "num_releases": num_rels,
+    "non_first_added": non_first_added,
+    "non_first_loc": non_first_loc,
+    "meaningful_commits": meaningful_commits,
+    "effective_commits": effective_commits,
+    "total_lines_touched": total_lines_touched,
+    "typical_commits_total": typical_commits_total,
+    "burst_excess_lines": burst_excess_lines,
+  }
+  for col_name in LOG1P_COLS:
+    new_cols["log1p_" + col_name] = _safe_log1p(log_sources[col_name])
+    new_cols["log_diff_commits_active"] = new_cols["log1p_num_commits"] - new_cols["log1p_active_commit_days"]
+    new_cols["log_diff_active_span"] = new_cols["log1p_active_commit_days"] - new_cols["log1p_project_span_days"]
+    new_cols["log_diff_loc_commits"] = new_cols["log1p_lines_of_code"] - new_cols["log1p_num_commits"]
+    new_cols["log_diff_loc_added"] = new_cols["log1p_lines_of_code"] - new_cols["log1p_lines_added_total"]
+    new_cols["log_diff_added_deleted"] = new_cols["log1p_lines_added_total"] - new_cols["log1p_lines_deleted_total"]
+    new_cols["log_diff_max_median_commit"] = new_cols["log1p_max_lines_in_one_commit"] - new_cols["log1p_median_lines_per_commit"]
+    new_cols["log_commits_x_log_active"] = new_cols["log1p_num_commits"] * new_cols["log1p_active_commit_days"]
+    new_cols["log_commits_x_log_loc"] = new_cols["log1p_num_commits"] * new_cols["log1p_lines_of_code"]
+    new_cols["effective_work_score"] = (
+      new_cols["log1p_effective_commits"].fillna(0.0)
+      + new_cols["log1p_active_commit_days"].fillna(0.0)
+      + 0.5 * new_cols["log1p_non_first_loc"].fillna(0.0)
+      + 0.5 * new_cols["log1p_total_assets"].fillna(0.0)
+    )
+    pair_df_cols = {}
+  for a, b in PAIR_COLS:
+    sa = _str_col(X, a).fillna("_NA_")
+    sb = _str_col(X, b).fillna("_NA_")
+    pair_df_cols[a + "__" + b] = sa + "__" + sb
+    out = pd.concat([X, pd.DataFrame(new_cols, index=X.index), pd.DataFrame(pair_df_cols, index=X.index)], axis=1)
+    return out.replace([np.inf, -np.inf], np.nan)
+  
