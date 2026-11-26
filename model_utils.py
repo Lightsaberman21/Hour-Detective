@@ -880,25 +880,32 @@ def _fit_one_model(name, X_tr_cb, X_va_cb, X_tr_lgb, X_va_lgb, X_tr_tree, X_va_t
     )
     m.fit(X_tr_tree, y_tr)
     return m, m.predict(X_va_tree)
-  if name == "et":
-    m = ExtraTreesRegressor(
-      n_estimators=300,
-      max_depth=18,
-      min_samples_leaf=3,
-      max_features=0.5,
-      random_state=seed,
-      n_jobs=-1,
-    )
-    m.fit(X_tr_tree, y_tr)
-    return m, m.predict(X_va_tree)
-  if name == "ridge":
-    m = RidgeCV(alphas=[10.0, 25.0, 50.0, 100.0, 250.0, 500.0, 1000.0, 2500.0])
-    m.fit(X_tr_lin, y_tr)
-    return m, m.predict(X_va_lin)
-  if name == "svr":
-    m = SVR(kernel="rbf", C=1.5, epsilon=0.05)
-    m.fit(X_tr_lin, y_tr)
-    return m, m.predict(X_va_lin)
+    if name == "et":
+        m = ExtraTreesRegressor(
+            n_estimators=150,
+            max_depth=13,
+            min_samples_leaf=5,
+            max_features=0.5,
+            random_state=seed,
+            n_jobs=-1,
+        )
+        m.fit(X_tr_tree, y_tr)
+        return m, m.predict(X_va_tree)
+
+    if name == "ridge":
+        m = RidgeCV(alphas=[10.0, 25.0, 50.0, 100.0, 250.0, 500.0, 1000.0, 2500.0])
+        m.fit(X_tr_lin, y_tr)
+        return m, m.predict(X_va_lin)
+
+    if name == "svr":
+        m = Pipeline(
+            [
+                ("rbf", Nystroem(n_components=min(400, max(2, len(X_tr_lin) // 2)), random_state=seed)),
+                ("ridge", RidgeCV(alphas=[1.0, 3.0, 10.0, 30.0, 100.0, 300.0])),
+            ]
+        )
+        m.fit(X_tr_lin, y_tr)
+        return m, m.predict(X_va_lin)
   m1 = MLPRegressor(
     hidden_layer_sizes=(128, 64),
     alpha=2.0,
@@ -941,7 +948,7 @@ def _build_meta_matrix(P, oof_bucket, bucket_means, X_base, has_bucket_clf):
   for col in ("has_no_git", "has_no_live_metrics", "has_no_readme_metrics"):
     if col in X_base.columns:
       parts.append(pd.to_numeric(X_base[col], errors="coerce").fillna(0.0).to_numpy(dtype=float).reshape(-1, 1))
-      return np.hstack(parts)
+  return np.hstack(parts)
 def fit_bundle(train_df):
   t0 = time.monotonic()
   with warnings.catch_warnings():
@@ -955,4 +962,240 @@ def fit_bundle(train_df):
     X_base = clean_features(df_clean)
     cat_cols = find_text_columns(X_base)
     X_base = text_to_str(ase, cat_cols)
-    feature_stats = _fit_feature_s
+    feature_stats = _fit_feature_stats(X_base, cat_cols)
+    X_base = _apply_feature_stats(X_base, feature_stats)
+    all_drop = [c for c in X_base.columns if c not in cat_cols and X_base[c].isna().all()]
+    if all_drop:
+      X_base = X_base.drop(columns=all_drop)
+    num_base_cols = [c for c in X_base.columns if c not in cat_cols]
+    te_col_names = ["te_" + c for c in cat_cols]
+    all_num_cols = num_base_cols + te_col_names
+    ohe_cols = [c for c in CAT_COLS if c in cat_cols]
+    feature_cols = list(X_base.columns)
+    cat_categories = {}
+    for c in cat_cols:
+      cats = sorted(X_base[c].dropna().astype(str).unique().tolist())
+      cat_categories[c] = cats if cats else ["__MISSING__"]
+    n_splits = min(10, max(2, len(y_log) // 20))
+    splits = _make_splits(y_log, bucket_y, n_splits)
+    candidate_models = [
+      "lgb_std",
+      "xgb_d5",
+      "cb_d6",
+      "ridge",
+      "lgb_et",
+      "xgb_d7",
+      "cb_d5",
+      "lgb_huber",
+      "hgb",
+      "et",
+      "svr",
+      "mlp",
+    ]
+    core_count = 5
+    has_bucket_clf = all(
+      len(np.unique(bucket_y[tr_idx])) == 4 for tr_idx, _ in splits
+    )
+    bucket_clfs = []
+    oof_bucket = np.zeros((len(y_log), 4), dtype=float)
+    bucket_means = np.array(
+      [float(np.mean(y_log[bucket_y == b])) if np.any(bucket_y == b) else float(np.mean(y_log)) for b in range(4)],
+      dtype=float,
+    )
+    fold_te_X = []
+    tree_preps = []
+    lin_preps = []
+    for fold_idx, (tr_idx, va_idx) in enumerate(splits):
+      X_tr_raw = X_base.iloc[tr_idx]
+      X_va_raw = X_base.iloc[va_idx]
+      y_tr = y_log[tr_idx]
+      y_va = y_log[va_idx]
+      X_tr_te, X_va_te = _add_fold_te(X_tr_raw, y_tr, X_va_raw, cat_cols, 42 + fold_idx)
+      X_tr_cb = _prep_cb(X_tr_te, cat_cols)
+      X_va_cb = _prep_cb(X_va_te, cat_cols)
+      X_tr_lgb = _prep_lgb(X_tr_te, cat_cols, cat_categories)
+      X_va_lgb = _prep_lgb(X_va_te, cat_cols, cat_categories)
+      tree_prep, lin_prep = _build_sk_preps(all_num_cols, ohe_cols, len(tr_idx))
+      X_tr_tree = tree_prep.fit_transform(X_tr_te)
+      X_va_tree = tree_prep.transform(X_va_te)
+      X_tr_lin = lin_prep.fit_transform(X_tr_te)
+      X_va_lin = lin_prep.transform(X_va_te)
+      tree_preps.append(tree_prep)
+      lin_preps.append(lin_prep)
+      cat_indices = [X_tr_cb.columns.get_loc(c) for c in cat_cols]
+      if has_bucket_clf:
+        bclf = LGBMClassifier(
+          objective="multiclass",
+          num_class=4,
+          n_estimators=700,
+          learning_rate=0.03,
+          num_leaves=23,
+          min_child_samples=20,
+          subsample=0.8,
+          subsample_freq=1,
+          colsample_bytree=0.7,
+          reg_lambda=3.0,
+          random_state=42 + fold_idx,
+          n_jobs=-1,
+          verbose=-1,
+        )
+        bclf.fit(
+          X_tr_lgb,
+          bucket_y[tr_idx],
+          eval_set=[(X_va_lgb, bucket_y[va_idx])],
+          callbacks=[early_stopping(60, verbose=False)],
+        )
+        oof_bucket[va_idx] = bclf.predict_proba(X_va_lgb)
+        bucket_clfs.append(bclf)
+      fold_te_X.append((
+        tr_idx,
+        va_idx,
+        X_tr_cb,
+        X_va_cb,
+        X_tr_lgb,
+        X_va_lgb,
+        X_tr_tree,
+        X_va_tree,
+        X_tr_lin,
+        X_va_lin,
+        y_tr,
+        y_va,
+        cat_indices,
+      ))
+    trained_names = []
+    fold_models = {}
+    oof_preds = {}
+    for idx_m, name in enumerate(candidate_models):
+      if idx_m >= core_count and (time.monotonic() - t0) > 430.0:
+        break
+      trained_names.append(name)
+      fold_models[name] = []
+      oof_arr = np.zeros(len(y_log), dtype=float)
+      for fold_idx, item in enumerate(fold_te_X):
+        (
+          tr_idx,
+          va_idx,
+          X_tr_cb,
+          X_va_cb,
+          X_tr_lgb,
+          X_va_lgb,
+          X_tr_tree,
+          X_va_tree,
+          X_tr_lin,
+          X_va_lin,
+          y_tr,
+          y_va,
+          cat_indices,
+        ) = item
+        m, pred_va = _fit_one_model(
+          name,
+          X_tr_cb,
+          X_va_cb,
+          X_tr_lgb,
+          X_va_lgb,
+          X_tr_tree,
+          X_va_tree,
+          X_tr_lin,
+          X_va_lin,
+          y_tr,
+          y_va,
+          cat_indices,
+          42 + fold_idx,
+        )
+        fold_models[name].append(m)
+        oof_arr[va_idx] = np.clip(pred_va, 0.0, MAX_LOG)
+      oof_preds[name] = oof_arr
+    te_maps = {}
+    for c in cat_cols:
+      te_maps[c] = _fit_te_map(X_base[c], y_log)
+    P = np.column_stack([oof_preds[m] for m in trained_names])
+    M_meta = _build_meta_matrix(P, oof_bucket, bucket_means, X_base, has_bucket_clf)
+    oof_simplex = np.zeros(len(y_log), dtype=float)
+    oof_ridge_meta = np.zeros(len(y_log), dtype=float)
+    for tr_idx, va_idx in splits:
+      w_f = _fit_simplex(P[tr_idx], y_log[tr_idx])
+      oof_simplex[va_idx] = np.clip(P[va_idx] @ w_f, 0.0, MAX_LOG)
+      rm = Pipeline([("sc", StandardScaler()), ("ridge", RidgeCV(alphas=[10.0, 25.0, 50.0, 100.0, 250.0, 500.0]))])
+      rm.fit(M_meta[tr_idx], y_log[tr_idx])
+      oof_ridge_meta[va_idx] = np.clip(rm.predict(M_meta[va_idx]), 0.0, MAX_LOG)
+    alpha_blend = float(_fit_simplex(np.column_stack([oof_simplex, oof_ridge_meta]), y_log)[0])
+    oof_blend_log = np.clip(alpha_blend * oof_simplex + (1.0 - alpha_blend) * oof_ridge_meta, 0.0, MAX_LOG)
+    oof_rmsle = float(np.sqrt(np.mean((oof_blend_log - y_log) ** 2)))
+    w_simplex = _fit_simplex(P, y_log)
+    ridge_meta = Pipeline([("sc", StandardScaler()), ("ridge", RidgeCV(alphas=[10.0, 25.0, 50.0, 100.0, 250.0, 500.0]))])
+    ridge_meta.fit(M_meta, y_log)
+    return {
+      "feature_cols": feature_cols,
+      "alpha_blend": alpha_blend,
+      "oof_rmsle": oof_rmsle,
+      "text_cols": cat_cols,
+      "cat_cols": cat_cols,
+      "ohe_cols": ohe_cols,
+      "all_num_cols": all_num_cols,
+      "num_base_cols": num_base_cols,
+      "cat_categories": cat_categories,
+      "feature_stats": feature_stats,
+      "te_maps": te_maps,
+      "n_splits": n_splits,
+      "model_names": trained_names,
+      "fold_models": fold_models,
+      "tree_preps": tree_preps,
+      "lin_preps": lin_preps,
+      "has_bucket_clf": has_bucket_clf,
+      "bucket_clfs": bucket_clfs,
+      "bucket_means": bucket_means,
+      "w_simplex": w_simplex,
+      "ridge_meta": ridge_meta,
+      "alpha_blend": alpha_blend,
+      "text_cols": cat_cols,
+      "model": fold_models[trained_names[0]][0],
+    }
+def predict_hours(bundle, df):
+  if len(df) == 0:
+    return np.array([], dtype=float)
+  with warnings.catch_warnings():
+    warnings.simplefilter("ignore")
+    X = clean_features(df)
+    for c in bundle["cat_cols"]:
+      if c not in X.columns:
+        X[c] = np.nan
+    X = text_to_str(X, bundle["cat_cols"])
+    X = _apply_feature_stats(X, bundle["feature_stats"])
+    X = X.reindex(columns=bundle["feature_cols"])
+    X = text_to_str(X, bundle["cat_cols"])
+    for c in bundle["num_base_cols"]:
+      X[c] = pd.to_numeric(X[c], errors="coerce").astype(float)
+    te_extra = {}
+    for c in bundle["cat_cols"]:
+      m, gm = bundle["te_maps"][c]
+      te_extra["te_" + c] = _apply_te_map(X[c], m, gm)
+    X_full = pd.concat([X, pd.DataFrame(te_extra, index=X.index)], axis=1)
+    X_cb = _prep_cb(X_full, bundle["cat_cols"])
+    X_lgb = _prep_lgb(X_full, bundle["cat_cols"], bundle["cat_categories"])
+    n_rows = len(df)
+    n_splits = bundle["n_splits"]
+    model_names = bundle["model_names"]
+    need_tree = any(m in ("hgb", "et") for m in model_names)
+    need_lin = any(m in ("ridge", "svr", "mlp") for m in model_names)
+    X_trees = [bundle["tree_preps"][i].transform(X_full) for i in range(n_splits)] if need_tree else [None] * n_splits
+    X_lins = [bundle["lin_preps"][i].transform(X_full) for i in range(n_splits)] if need_lin else [None] * n_splits
+    P_test = np.zeros((n_rows, len(model_names)), dtype=float)
+    for j, name in enumerate(model_names):
+      acc = np.zeros(n_rows, dtype=float)
+      for i in range(n_splits):
+        pred = _predict_one_model(name, bundle["fold_models"][name][i], X_cb, X_lgb, X_trees[i], X_lins[i])
+        acc += np.clip(pred, 0.0, MAX_LOG)
+      P_test[:, j] = acc / float(n_splits)
+    if bundle["has_bucket_clf"]:
+      b_acc = np.zeros((n_rows, 4), dtype=float)
+      for clf in bundle["bucket_clfs"]:
+        b_acc += clf.predict_proba(X_lgb)
+      b_probs = b_acc / float(len(bundle["bucket_clfs"]))
+    else:
+      b_probs = np.zeros((n_rows, 4), dtype=float)
+    M_test = _build_meta_matrix(P_test, b_probs, bundle["bucket_means"], X_full, bundle["has_bucket_clf"])
+    pred_simplex = np.clip(P_test @ bundle["w_simplex"], 0.0, MAX_LOG)
+    pred_ridge = np.clip(bundle["ridge_meta"].predict(M_test), 0.0, MAX_LOG)
+    alpha = bundle["alpha_blend"]
+    pred_log = np.clip(alpha * pred_simplex + (1.0 - alpha) * pred_ridge, 0.0, MAX_LOG)
+    return np.clip(np.expm1(pred_log), 0.0, MAX_HOURS):
