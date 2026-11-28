@@ -736,7 +736,7 @@ def _make_splits(y_log, bucket_y, n_splits):
 def _fit_one_model(name, X_tr_cb, X_va_cb, X_tr_lgb, X_va_lgb, X_tr_tree, X_va_tree, X_tr_lin, X_va_lin, y_tr, y_va, cat_indices, seed):
   if name == "cb_d6":
     m = CatBoostRegressor(
-      iterations=2500,
+      iterations=800,
       learning_rate=0.025,
       depth=6,
       l2_leaf_reg=5.0,
@@ -749,7 +749,7 @@ def _fit_one_model(name, X_tr_cb, X_va_cb, X_tr_lgb, X_va_lgb, X_tr_tree, X_va_t
       allow_writing_files=False,
       verbose=0,
     )
-    m.fit(X_tr_cb, y_tr, eval_set=(X_va_cb, y_va), cat_features=cat_indices, early_stopping_rounds=120, verbose=False)
+    m.fit(X_tr_cb, y_tr, cat_features=cat_indices, verbose= False)
     return m, m.predict(X_va_cb)
   if name == "cb_d5":
     m = CatBoostRegressor(
@@ -768,11 +768,11 @@ def _fit_one_model(name, X_tr_cb, X_va_cb, X_tr_lgb, X_va_lgb, X_tr_tree, X_va_t
       allow_writing_files=False,
       verbose=0,
     )
-    m.fit(X_tr_cb, y_tr, eval_set=(X_va_cb, y_va), cat_features=cat_indices, early_stopping_rounds=120, verbose=False)
+    m.fit(X_tr_cb, y_tr, cat_features=cat_indices, verbose=False)
     return m, m.predict(X_va_cb)
   if name == "lgb_std":
     m = LGBMRegressor(
-      n_estimators=2500,
+      n_estimators=600,
       learning_rate=0.02,
       num_leaves=31,
       min_child_samples=20,
@@ -785,7 +785,7 @@ def _fit_one_model(name, X_tr_cb, X_va_cb, X_tr_lgb, X_va_lgb, X_tr_tree, X_va_t
       n_jobs=-1,
       verbose=-1,
     )
-    m.fit(X_tr_lgb, y_tr, eval_set=[(X_va_lgb, y_va)], eval_metric="rmse", callbacks=[early_stopping(120, verbose=False)])
+    m.fit(X_tr_lgb, y_tr)
     return m, m.predict(X_va_lgb)
   if name == "lgb_et":
     m = LGBMRegressor(
@@ -978,21 +978,8 @@ def fit_bundle(train_df):
       cat_categories[c] = cats if cats else ["__MISSING__"]
     n_splits = min(10, max(2, len(y_log) // 20))
     splits = _make_splits(y_log, bucket_y, n_splits)
-    candidate_models = [
-      "lgb_std",
-      "xgb_d5",
-      "cb_d6",
-      "ridge",
-      "lgb_et",
-      "xgb_d7",
-      "cb_d5",
-      "lgb_huber",
-      "hgb",
-      "et",
-      "svr",
-      "mlp",
-    ]
-    core_count = 5
+    candidate_models = ["lgb_std", "cb_d6"]
+    core_count = 2
     has_bucket_clf = all(
       len(np.unique(bucket_y[tr_idx])) == 4 for tr_idx, _ in splits
     )
