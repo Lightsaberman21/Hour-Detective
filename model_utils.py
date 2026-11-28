@@ -1184,3 +1184,71 @@ def predict_hours(bundle, df):
     alpha = bundle["alpha_blend"]
     pred_log = np.clip(alpha * pred_simplex + (1.0 - alpha) * pred_ridge, 0.0, MAX_LOG)
     return np.clip(np.expm1(pred_log), 0.0, MAX_HOURS)
+
+N_TREES = 600
+def _single_model(seed):
+  return LGBMRegressor(
+    n_estimators=N_TREES, learning_rate=0.02, num_leaves=31, min_child_samples=20,
+    subsample=0.8, subsample_freq=1, colsample_bytree=0.7,
+    reg_alpha=0.5, reg_lambda=3.0, random_state=seed, n_jobs=-1, verbose=-1,
+  )
+
+def fit_bundle(train_df):
+  with warnings.catch_warnings():
+    warnings.simplefilter("ignore")
+    y_series = pd.to_numeric(train_df["hours_spent"], errors="coerce")
+    df_clean = train_df.loc[y_series.notna()].reset_index(drop=True)
+    y_raw = y_series.loc[y_series.notna()].reset_index(drop=True).clip(lower=0.0, upper=MAX_HOURS)
+    y_log = np.log1p(y_raw.to_numpy(dtype=float))
+    X_base = clean_features(df_clean)
+    cat_cols = find_text_columns(X_base)
+    X_base = text_to_str(X_base, cat_cols)
+    feature_stats = _fit_feature_stats(X_base, cat_cols)
+    X_base = _apply_feature_stats(X_base, feature_stats)
+    all_drop = [c for c in X_base.columns if c not in cat_cols and X_base[c].isna().all()]
+    if all_drop:
+      X_base = X_base.drop(columns=all_drop)
+    num_base_cols = [c for c in X_base.columns if c not in cat_cols]
+    cat_categories = {}
+    for c in cat_cols:
+      cats = sorted(X_base[c].dropna().astype(str).unique().tolist())
+      cat_categories[c] = cats if cats else ["__MISSING__"]
+    splits = _make_splits(y_log, _extract_buckets(df_clean, y_raw), 5)
+    oof = np.zeros(len(y_log))
+    models = []
+    for k, (tr, va) in enumerate(splits):
+      X_tr, X_va = _add_fold_te(X_base.iloc[tr], y_log[tr], X_base.iloc[va], cat_cols, 42 + k)
+      m = _single_model(42 + k)
+      m.fit(_prep_lgb(X_tr, cat_cols, cat_categories), y_log[tr])  # fixed trees, no early stopping
+      oof[va] = np.clip(m.predict(_prep_lgb(X_va, cat_cols, cat_categories)), 0.0, MAX_LOG)
+      models.append(m)
+      te_maps = {c: _fit_te_map(X_base[c], y_log) for c in cat_cols}
+    return {
+      "feature_cols": list(X_base.columns), "oof_rmsle": float(np.sqrt(np.mean((oof - y_log) ** 2))),
+      "cat_cols": cat_cols, "num_base_cols": num_base_cols, "cat_categories": cat_categories,
+      "feature_stats": feature_stats, "te_maps": te_maps, "models": models,
+    }
+
+def predict_hours(bundle, df):
+  if len(df) == 0:
+    return np.array([], dtype=float)
+  with warnings.catch_warnings():
+    warnings.simplefilter("ignore")
+    X = clean_features(df)
+    for c in bundle["cat_cols"]:
+      if c not in X.columns:
+        X[c] = np.nan
+    X = text_to_str(X, bundle["cat_cols"])
+    X = _apply_feature_stats(X, bundle["feature_stats"])
+    X = X.reindex(columns=bundle["feature_cols"])
+    X = text_to_str(X, bundle["cat_cols"])
+    for c in bundle["num_base_cols"]:
+      X[c] = pd.to_numeric(X[c], errors="coerce").astype(float)
+    te = {}
+    for c in bundle["cat_cols"]:
+      m, gm = bundle["te_maps"][c]
+      te["te_" + c] = _apply_te_map(X[c], m, gm)
+    X_full = pd.concat([X, pd.DataFrame(te, index=X.index)], axis=1)
+    X_lgb = _prep_lgb(X_full, bundle["cat_cols"], bundle["cat_categories"])
+    pred = np.mean([np.clip(m.predict(X_lgb), 0.0, MAX_LOG) for m in bundle["models"]], axis=0)
+    return np.clip(np.expm1(pred), 0.0, MAX_HOURS)
